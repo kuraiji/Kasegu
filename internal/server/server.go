@@ -52,8 +52,11 @@ func Loop() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println(kClient)
-	kClient.GetAccountBalance()
+	b, err := kClient.GetAccountBalance()
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(b)
 
 	e := echo.New()
 	e.GET("/", func(c echo.Context) error { return c.JSON(http.StatusOK, "Hello, World!") })

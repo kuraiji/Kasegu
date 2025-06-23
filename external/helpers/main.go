@@ -147,7 +147,7 @@ func AppendQueryParameters(url string, params *map[string]string) string {
 }
 
 func MapToURLValues(m map[string]any) (urlMod.Values, error) {
-	uv := urlMod.Values{}
+	uv := make(urlMod.Values)
 	for k, v := range m {
 		switch v := v.(type) {
 		case []string:

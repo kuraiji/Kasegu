@@ -11,25 +11,36 @@ import (
 	"io"
 	"kasegu/external/helpers"
 	"net/http"
-	urlMod "net/url"
+	"strings"
 	"time"
 )
 
 const BaseURL = "https://api.kraken.com"
+const UserAgent = "KaseguKrakenClient/0.1.0"
 
 type Kraken interface {
-	GetAccountBalance()
+	GetAccountBalance() (*map[string]string, error)
 }
 type kraken struct {
 	apiKey     string
 	privateKey string
 }
 
+type requestParams struct {
+	method      string
+	path        string
+	query       map[string]any
+	body        map[string]any
+	publicKey   string
+	privateKey  string
+	environment string
+}
+
 func getNonce() string {
 	return fmt.Sprint(time.Now().UnixMilli())
 }
 
-/*func getSignature(privateKey string, data string, nonce string, path string) (string, error) {
+func getSignature(privateKey string, data string, nonce string, path string) (string, error) {
 	message := sha256.New()
 	message.Write([]byte(nonce + data))
 	return sign(privateKey, []byte(path+string(message.Sum(nil))))
@@ -40,12 +51,12 @@ func sign(privateKey string, message []byte) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	hmacHash := hmac.New(sha256.New, key)
+	hmacHash := hmac.New(sha512.New, key)
 	hmacHash.Write(message)
 	return base64.StdEncoding.EncodeToString(hmacHash.Sum(nil)), nil
-}*/
+}
 
-func getKrakenSignature(urlPath string, data interface{}, secret string) (string, error) {
+/*func getKrakenSignature(urlPath string, data interface{}, secret string) (string, error) {
 	var encodedData string
 	switch v := data.(type) {
 	case string:
@@ -63,90 +74,88 @@ func getKrakenSignature(urlPath string, data interface{}, secret string) (string
 	default:
 		return "", fmt.Errorf("invalid data type")
 	}
+	fmt.Println(encodedData)
 	sha := sha256.New()
 	sha.Write([]byte(encodedData))
 	shaSum := sha.Sum(nil)
 	message := append([]byte(urlPath), shaSum...)
 	d, err := base64.StdEncoding.DecodeString(secret)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("decode failed: %w", err)
 	}
 	mac := hmac.New(sha512.New, d)
 	mac.Write(message)
 	macSum := mac.Sum(nil)
 	sigDigest := base64.StdEncoding.EncodeToString(macSum)
 	return sigDigest, nil
-}
+}*/
 
-type requestParams struct {
-	method    string
-	path      string
-	query     *map[string]any
-	body      *map[string]any
-	isPrivate bool
-}
-
-func (k *kraken) generateRequestObject(rp *requestParams) (*http.Request, error) {
-	url := BaseURL + rp.path
-	var qs string
-	if rp.query != nil && len(*rp.query) > 0 {
-		qv, err := helpers.MapToURLValues(*rp.query)
+func generateRequest(c *requestParams) (*http.Request, error) {
+	url := c.environment + c.path
+	var queryString string
+	if len(c.query) > 0 {
+		queryValues, err := helpers.MapToURLValues(c.query)
 		if err != nil {
-			return nil, fmt.Errorf("error converting query params to URL values: %w", err)
+			return nil, fmt.Errorf("query to URL values: %s", err)
 		}
-		qs = qv.Encode()
-		url += "?" + qs
+		queryString = queryValues.Encode()
+		url += "?" + queryString
 	}
 	var nonce any
-	bm := rp.body
-	if bm == nil {
-		bm = new(map[string]any)
-	}
-	if rp.isPrivate {
-		if *bm == nil {
-			*bm = make(map[string]any)
+	bodyMap := c.body
+	if len(c.publicKey) > 0 {
+		if bodyMap == nil {
+			bodyMap = make(map[string]any)
 		}
 		var ok bool
-		nonce, ok = (*bm)["nonce"]
+		nonce, ok = bodyMap["nonce"]
 		if !ok {
+			/*t, err := strconv.ParseInt(getNonce(), 10, 64)
+			if err != nil {
+				return nil, err
+			}
+			nonce = t*/
 			nonce = getNonce()
-			(*bm)["nonce"] = nonce
+			bodyMap["nonce"] = nonce
 		}
 	}
-	h := make(http.Header)
-	var br io.Reader
-	//var bs string
-	if bm != nil && len(*bm) > 0 {
-		bb, err := json.Marshal(*bm)
+	headers := make(http.Header)
+	var bodyReader io.Reader
+	var bodyString string
+	if len(bodyMap) > 0 {
+		bodyBytes, err := json.Marshal(bodyMap)
 		if err != nil {
-			return nil, fmt.Errorf("error converting body to JSON: %w", err)
+			return nil, fmt.Errorf("json marshal: %s", err)
 		}
-		//bs = string(bb)
-		br = bytes.NewReader(bb)
-		h.Set("Content-Type", "application/json")
+		bodyString = string(bodyBytes)
+		bodyReader = bytes.NewReader(bodyBytes)
+		//fmt.Println(bodyString)
+		headers.Set("Content-Type", "application/json")
 	}
-	req, err := http.NewRequest(rp.method, url, br)
+	request, err := http.NewRequest(c.method, url, bodyReader)
 	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
+		return nil, fmt.Errorf("http new request: %s", err)
 	}
-	if rp.isPrivate {
-		s, err := getKrakenSignature(rp.path, *bm, k.privateKey)
+	if len(c.publicKey) > 0 {
+		signature, err := getSignature(c.privateKey, queryString+bodyString, fmt.Sprint(nonce), c.path)
+		//signature, err := getKrakenSignature(c.path, bodyMap, c.privateKey)
 		if err != nil {
-			return nil, fmt.Errorf("error generating signature: %w", err)
+			return nil, fmt.Errorf("get signature: %s", err)
 		}
-		h.Set("API-Key", k.apiKey)
-		h.Set("API-Sign", s)
+		headers.Set("API-Key", c.publicKey)
+		headers.Set("API-Sign", signature)
+		headers.Set("User-Agent", UserAgent)
 	}
-	req.Header = h
-	return req, nil
+	request.Header = headers
+	return request, nil
 }
 
-func (k *kraken) request(rp *requestParams) (*http.Response, error) {
-	req, err := k.generateRequestObject(rp)
+func request(rp *requestParams) (*http.Response, error) {
+	req, err := generateRequest(rp)
 	if err != nil {
 		return nil, err
 	}
-	fmt.Println(req)
+	//fmt.Println(req)
 	return http.DefaultClient.Do(req)
 }
 
@@ -160,19 +169,31 @@ func New() (Kraken, error) {
 	return &kraken{apiKey: (*envMap)[apiKeyEnvName], privateKey: (*envMap)[privateKeyEnvName]}, nil
 }
 
-func (k *kraken) GetAccountBalance() {
-	resp, err := k.request(&requestParams{
-		method:    "POST",
-		path:      "/0/private/Balance",
-		isPrivate: true,
+func (k *kraken) GetAccountBalance() (*map[string]string, error) {
+	resp, err := request(&requestParams{
+		method:      "POST",
+		path:        "/0/private/Balance",
+		publicKey:   k.apiKey,
+		privateKey:  k.privateKey,
+		environment: BaseURL,
 	})
 	if err != nil {
-		fmt.Printf("error getting account balance: %v\n", err)
+		return nil, fmt.Errorf("error getting account balance: %w", err)
 	}
 	defer helpers.CheckedClose(resp.Body)
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		fmt.Printf("error reading response body: %v\n", err)
+		return nil, fmt.Errorf("error getting account balance: %w", err)
 	}
-	fmt.Println(string(data))
+	var balance struct {
+		Error  []string          `json:"error"`
+		Result map[string]string `json:"result"`
+	}
+	if err := json.Unmarshal(data, &balance); err != nil {
+		return nil, fmt.Errorf("error parsing the response: %w", err)
+	}
+	if len(balance.Error) > 0 {
+		return nil, fmt.Errorf("error getting account balance: %s", strings.Join(balance.Error, ","))
+	}
+	return &balance.Result, nil
 }
