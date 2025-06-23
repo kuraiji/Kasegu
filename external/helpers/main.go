@@ -1,18 +1,62 @@
 package helpers
 
 import (
+	"bytes"
 	"encoding/gob"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	urlMod "net/url"
 	"os"
+	"reflect"
 
 	_ "github.com/joho/godotenv/autoload"
 )
 
 const gobDirPath = "./gobs/"
+
+type RequestParams struct {
+	Method      string
+	Path        string
+	Query       *map[string]any
+	Body        *map[string]any
+	Header      *map[string]string
+	Environment string
+}
+
+func Request(rp *RequestParams) (*http.Response, error) {
+	url := rp.Environment + rp.Path
+	if rp.Query != nil && len(*rp.Query) > 0 {
+		qv, err := MapToURLValues(*rp.Query)
+		if err != nil {
+			return nil, fmt.Errorf("error converting query params to URL values: %w", err)
+		}
+		url += "?" + qv.Encode()
+	}
+	var br io.Reader
+	if rp.Body != nil && len(*rp.Body) > 0 {
+		bb, err := json.Marshal(rp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("error converting body to JSON: %w", err)
+		}
+		br = bytes.NewReader(bb)
+	}
+	req, err := http.NewRequest(rp.Method, url, br)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	var h http.Header
+	if rp.Header != nil && len(*rp.Header) > 0 {
+		for k, v := range *rp.Header {
+			h[k] = []string{v}
+		}
+	}
+	req.Header = h
+	return http.DefaultClient.Do(req)
+}
 
 func CheckedClose(Body io.ReadCloser) {
 	err := Body.Close()
@@ -89,4 +133,38 @@ func UnserializeData[T interface{}](filename string) (*T, error) {
 		return nil, fmt.Errorf("failed decoding: %w", err)
 	}
 	return data, nil
+}
+
+func AppendQueryParameters(url string, params *map[string]string) string {
+	if len(*params) == 0 {
+		return url
+	}
+	queryParams := make(urlMod.Values)
+	for key, value := range *params {
+		queryParams.Add(key, value)
+	}
+	return url + "?" + queryParams.Encode()
+}
+
+func MapToURLValues(m map[string]any) (urlMod.Values, error) {
+	uv := urlMod.Values{}
+	for k, v := range m {
+		switch v := v.(type) {
+		case []string:
+			uv[k] = v
+		case string:
+			uv[k] = []string{v}
+		default:
+			j, err := json.Marshal(v)
+			if err != nil {
+				return nil, err
+			}
+			uv[k] = []string{string(j)}
+		}
+	}
+	return uv, nil
+}
+
+func IsZeroOfUnderlyingType(x interface{}) bool {
+	return reflect.DeepEqual(x, reflect.Zero(reflect.TypeOf(x)).Interface())
 }

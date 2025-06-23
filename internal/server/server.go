@@ -2,7 +2,7 @@ package server
 
 import (
 	"fmt"
-	"kasegu/internal/coingecko"
+	"kasegu/internal/kraken"
 	"log"
 	"net/http"
 
@@ -23,8 +23,7 @@ func Loop() {
 	if err != nil || !isAuthenticated {
 		log.Fatal(fmt.Errorf("client isn't authenticated: %v", err))
 	}*/
-
-	cgClient, err := coingecko.CreateClient()
+	/*cgClient, err := coingecko.CreateClient()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -34,6 +33,28 @@ func Loop() {
 	} else {
 		log.Fatal(err)
 	}
+	coin, err := coingecko.GetCoinData(&coingecko.GetCoinDataParams{Coins: resp, Name: "bitcoin"})
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(coin)
+	histData, err := cgClient.CoinHistoricalChart(&coingecko.GetCoinHistoricalChartParams{
+		Coin: coin,
+		To:   time.Now().Unix(),
+		From: time.Now().AddDate(-1, 0, 0).Unix(),
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(histData)*/
+
+	kClient, err := kraken.New()
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(kClient)
+	kClient.GetAccountBalance()
+
 	e := echo.New()
 	e.GET("/", func(c echo.Context) error { return c.JSON(http.StatusOK, "Hello, World!") })
 	e.Logger.Fatal(e.Start(":1323"))

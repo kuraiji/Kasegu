@@ -2,10 +2,12 @@ package coingecko
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"kasegu/external/helpers"
 	"net/http"
+	"strings"
 )
 
 const envName = "COINGECKO_API_KEY"
@@ -16,6 +18,9 @@ const pingEndpoint = "/ping"
 
 const coinsListEndpoint = "/coins/list"
 const coinsListSerializedDataFilename = "coinsList"
+
+const coinHistoricalChartEndpoint = "/coins/%s/market_chart/range"
+const coinHistoricalChartSerializedDataFilename = "coinHistoricalChart"
 
 type Coingecko struct {
 	client *http.Client
@@ -73,6 +78,82 @@ func (c *Coingecko) CoinsList() (*[]CoinData, error) {
 		return nil, fmt.Errorf("failed serializing the data: %w", err)
 	}
 	return &coins, nil
+}
+
+type GetCoinDataParams struct {
+	Symbol string
+	Id     string
+	Name   string
+	Coins  *[]CoinData
+}
+
+func GetCoinData(params *GetCoinDataParams) (*CoinData, error) {
+	if params.Coins == nil {
+		return nil, errors.New("no coin list provided")
+	}
+	if params.Id == "" && params.Name == "" && params.Symbol == "" {
+		return nil, errors.New("no filters provided")
+	}
+	for _, coin := range *params.Coins {
+		if params.Symbol != "" && strings.ToLower(coin.Symbol) != strings.ToLower(params.Symbol) {
+			continue
+		}
+		if params.Id != "" && strings.ToLower(coin.Id) != strings.ToLower(params.Id) {
+			continue
+		}
+		if params.Name != "" && strings.ToLower(coin.Name) != strings.ToLower(params.Name) {
+			continue
+		}
+		return &coin, nil
+	}
+	return nil, errors.New("couldn't find coin in list")
+}
+
+type GetCoinHistoricalChartParams struct {
+	VsCurrency string
+	From       int64
+	To         int64
+	Interval   string
+	Precision  string
+	Coin       *CoinData
+}
+
+func (c *Coingecko) CoinHistoricalChart(params *GetCoinHistoricalChartParams) (string, error) {
+	if params.Coin == nil || params.From == 0 || params.To == 0 {
+		return "", errors.New("required parameters not provided")
+	}
+	if ok := helpers.IsThereSerializedData(coinHistoricalChartSerializedDataFilename); ok {
+		fmt.Println("Attempting to Fetch Historical Chart Data from Local Disk...")
+		//data, err := helpers.UnserializeData()
+	}
+	fmt.Println("Attempting to connect to CG API to Fetch Historical Chart Data...")
+	url := fmt.Sprintf("%s%s", coingeckoURL, fmt.Sprintf(coinHistoricalChartEndpoint, params.Coin.Id))
+	qParamMap := map[string]string{}
+	qParamMap["from"] = fmt.Sprintf("%d", params.From)
+	qParamMap["to"] = fmt.Sprintf("%d", params.To)
+	if params.VsCurrency == "" {
+		qParamMap["vs_currency"] = "usd"
+	} else {
+		qParamMap["vs_currency"] = params.VsCurrency
+	}
+	if params.Interval != "" {
+		qParamMap["interval"] = params.Interval
+	}
+	if params.Precision != "" {
+		qParamMap["precision"] = params.Precision
+	}
+	url = helpers.AppendQueryParameters(url, &qParamMap)
+	fmt.Println(url)
+	resp, err := helpers.GetWithHeaders(c.client, url, http.Header{headerName: {c.apiKey}})
+	if err != nil {
+		return "", fmt.Errorf("failed connecting to congecko API: %w", err)
+	}
+	defer helpers.CheckedClose(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed reading the response from the endpoint: %w", err)
+	}
+	return fmt.Sprintf("%s", string(body)), nil
 }
 
 func CreateClient() (*Coingecko, error) {
