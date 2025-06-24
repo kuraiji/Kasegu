@@ -2,3 +2,12 @@
 .env
 /gobs/
 /.idea/
+/ui/node_modules
+/ui/.DS_Store
+/ui/dist
+/ui/dist-ssr
+/ui/*.local
+/ui/count.txt
+/ui/.env
+/ui/.tanstack/
+/ui/.vscode/

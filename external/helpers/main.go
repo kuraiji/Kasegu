@@ -12,7 +12,9 @@ import (
 	urlMod "net/url"
 	"os"
 	"reflect"
+	"time"
 
+	"github.com/gorilla/websocket"
 	_ "github.com/joho/godotenv/autoload"
 )
 
@@ -25,6 +27,10 @@ type RequestParams struct {
 	Body        *map[string]any
 	Header      *map[string]string
 	Environment string
+}
+
+type ConnectionType interface {
+	Close() error
 }
 
 func Request(rp *RequestParams) (*http.Response, error) {
@@ -58,11 +64,41 @@ func Request(rp *RequestParams) (*http.Response, error) {
 	return http.DefaultClient.Do(req)
 }
 
-func CheckedClose(Body io.ReadCloser) {
-	err := Body.Close()
+func CheckedClose(conn ConnectionType) {
+	err := conn.Close()
 	if err != nil {
 		log.Println(fmt.Errorf("failed closing file: %w", err))
 	}
+}
+
+func CloseWebsocket(conn *websocket.Conn) error {
+	deadline := time.Now().Add(time.Minute)
+	err := conn.WriteControl(
+		websocket.CloseMessage,
+		websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
+		deadline,
+	)
+	if err != nil {
+		return fmt.Errorf("failed closing websocket: %w", err)
+	}
+	err = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if err != nil {
+		return fmt.Errorf("failed setting read deadline: %w", err)
+	}
+	for {
+		_, _, err := conn.NextReader()
+		if websocket.IsCloseError(err, websocket.CloseNormalClosure) {
+			break
+		}
+		if err != nil {
+			break
+		}
+	}
+	err = conn.Close()
+	if err != nil {
+		return fmt.Errorf("failed closing connection: %w", err)
+	}
+	return nil
 }
 
 func LoadEnv(envNames []string) (*map[string]string, error) {

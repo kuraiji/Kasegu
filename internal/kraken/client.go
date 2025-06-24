@@ -2,6 +2,7 @@ package kraken
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/sha512"
@@ -13,17 +14,25 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 const BaseURL = "https://api.kraken.com"
+const PublicWSURL = "wss://ws.kraken.com/v2"
 const UserAgent = "KaseguKrakenClient/0.1.0"
 
 type Kraken interface {
+	Close() error
 	GetAccountBalance() (*map[string]string, error)
+	GetOHCLData(pair string, interval uint16) (*map[string]any, error)
+	CandlesWS() error
 }
 type kraken struct {
 	apiKey     string
 	privateKey string
+	conn       *websocket.Conn
+	loopCancel *context.CancelFunc
 }
 
 type requestParams struct {
@@ -56,40 +65,6 @@ func sign(privateKey string, message []byte) (string, error) {
 	return base64.StdEncoding.EncodeToString(hmacHash.Sum(nil)), nil
 }
 
-/*func getKrakenSignature(urlPath string, data interface{}, secret string) (string, error) {
-	var encodedData string
-	switch v := data.(type) {
-	case string:
-		var jsonData map[string]interface{}
-		if err := json.Unmarshal([]byte(v), &jsonData); err != nil {
-			return "", err
-		}
-		encodedData = jsonData["nonce"].(string) + v
-	case map[string]interface{}:
-		dataMap := urlMod.Values{}
-		for key, value := range v {
-			dataMap.Set(key, fmt.Sprintf("%v", value))
-		}
-		encodedData = v["nonce"].(string) + dataMap.Encode()
-	default:
-		return "", fmt.Errorf("invalid data type")
-	}
-	fmt.Println(encodedData)
-	sha := sha256.New()
-	sha.Write([]byte(encodedData))
-	shaSum := sha.Sum(nil)
-	message := append([]byte(urlPath), shaSum...)
-	d, err := base64.StdEncoding.DecodeString(secret)
-	if err != nil {
-		return "", fmt.Errorf("decode failed: %w", err)
-	}
-	mac := hmac.New(sha512.New, d)
-	mac.Write(message)
-	macSum := mac.Sum(nil)
-	sigDigest := base64.StdEncoding.EncodeToString(macSum)
-	return sigDigest, nil
-}*/
-
 func generateRequest(c *requestParams) (*http.Request, error) {
 	url := c.environment + c.path
 	var queryString string
@@ -110,11 +85,6 @@ func generateRequest(c *requestParams) (*http.Request, error) {
 		var ok bool
 		nonce, ok = bodyMap["nonce"]
 		if !ok {
-			/*t, err := strconv.ParseInt(getNonce(), 10, 64)
-			if err != nil {
-				return nil, err
-			}
-			nonce = t*/
 			nonce = getNonce()
 			bodyMap["nonce"] = nonce
 		}
@@ -129,7 +99,6 @@ func generateRequest(c *requestParams) (*http.Request, error) {
 		}
 		bodyString = string(bodyBytes)
 		bodyReader = bytes.NewReader(bodyBytes)
-		//fmt.Println(bodyString)
 		headers.Set("Content-Type", "application/json")
 	}
 	request, err := http.NewRequest(c.method, url, bodyReader)
@@ -138,7 +107,6 @@ func generateRequest(c *requestParams) (*http.Request, error) {
 	}
 	if len(c.publicKey) > 0 {
 		signature, err := getSignature(c.privateKey, queryString+bodyString, fmt.Sprint(nonce), c.path)
-		//signature, err := getKrakenSignature(c.path, bodyMap, c.privateKey)
 		if err != nil {
 			return nil, fmt.Errorf("get signature: %s", err)
 		}
@@ -155,8 +123,31 @@ func request(rp *requestParams) (*http.Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	//fmt.Println(req)
 	return http.DefaultClient.Do(req)
+}
+
+func openConnection(endpoint string) (*websocket.Conn, error) {
+	c, _, err := websocket.DefaultDialer.Dial(endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to establish websocket connection to endpoint %s: %w", endpoint, err)
+	}
+	return c, nil
+}
+
+func wsLoop(conn *websocket.Conn, ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			fmt.Println("closing loop")
+			return
+		default:
+			_, p, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+			fmt.Println("Got message:", string(p))
+		}
+	}
 }
 
 func New() (Kraken, error) {
@@ -166,7 +157,29 @@ func New() (Kraken, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error loading api keys needed for Kraken: %w", err)
 	}
-	return &kraken{apiKey: (*envMap)[apiKeyEnvName], privateKey: (*envMap)[privateKeyEnvName]}, nil
+	c, err := openConnection(PublicWSURL)
+	if err != nil {
+		return nil, fmt.Errorf("error opening Kraken connection: %w", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	go wsLoop(c, ctx)
+	return &kraken{
+		apiKey:     (*envMap)[apiKeyEnvName],
+		privateKey: (*envMap)[privateKeyEnvName],
+		conn:       c,
+		loopCancel: &cancel,
+	}, nil
+}
+
+func (k *kraken) Close() error {
+	fmt.Println("closing connection gracefully")
+	(*k.loopCancel)()
+	err := helpers.CloseWebsocket(k.conn)
+	if err != nil {
+		return fmt.Errorf("error closing Kraken connection: %w", err)
+	}
+	fmt.Println("closed connection gracefully")
+	return nil
 }
 
 func (k *kraken) GetAccountBalance() (*map[string]string, error) {
@@ -178,12 +191,12 @@ func (k *kraken) GetAccountBalance() (*map[string]string, error) {
 		environment: BaseURL,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("error getting account balance: %w", err)
+		return nil, fmt.Errorf("error getting account balance from endpoint: %w", err)
 	}
 	defer helpers.CheckedClose(resp.Body)
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("error getting account balance: %w", err)
+		return nil, fmt.Errorf("error reading account balance: %w", err)
 	}
 	var balance struct {
 		Error  []string          `json:"error"`
@@ -196,4 +209,61 @@ func (k *kraken) GetAccountBalance() (*map[string]string, error) {
 		return nil, fmt.Errorf("error getting account balance: %s", strings.Join(balance.Error, ","))
 	}
 	return &balance.Result, nil
+}
+
+func (k *kraken) GetOHCLData(pair string, interval uint16) (*map[string]any, error) {
+	resp, err := request(&requestParams{
+		method: "GET",
+		path:   "/0/public/OHLC",
+		query: map[string]any{
+			"pair":     pair,
+			"interval": interval,
+		},
+		environment: BaseURL,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("error getting OHCL data from endpoint: %w", err)
+	}
+	defer helpers.CheckedClose(resp.Body)
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("error reading OHCL data: %w", err)
+	}
+	var ohcl struct {
+		Error  []string       `json:"error"`
+		Result map[string]any `json:"result"`
+	}
+	if err := json.Unmarshal(data, &ohcl); err != nil {
+		return nil, fmt.Errorf("error parsing OHCL data: %w", err)
+	}
+	if len(ohcl.Error) > 0 {
+		return nil, fmt.Errorf("error getting : %s", strings.Join(ohcl.Error, ","))
+	}
+	return &ohcl.Result, nil
+}
+
+type candlesWSParamsParams struct {
+	Channel  string   `json:"channel"`
+	Symbol   []string `json:"symbol"`
+	Interval uint8    `json:"interval"`
+}
+type CandlesWSParams struct {
+	Method string                `json:"method"`
+	Params candlesWSParamsParams `json:"params"`
+}
+
+func (k *kraken) CandlesWS() error {
+	var params = CandlesWSParams{
+		Method: "subscribe",
+		Params: candlesWSParamsParams{
+			Channel:  "ohlc",
+			Symbol:   []string{"BTC/USD"},
+			Interval: 1,
+		},
+	}
+	err := k.conn.WriteJSON(params)
+	if err != nil {
+		return fmt.Errorf("error sending candles request: %w", err)
+	}
+	return nil
 }
