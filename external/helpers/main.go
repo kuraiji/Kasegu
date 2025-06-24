@@ -70,6 +70,12 @@ func CheckedClose(conn ConnectionType) {
 		log.Println(fmt.Errorf("failed closing file: %w", err))
 	}
 }
+func CheckedWSClose(conn *websocket.Conn) {
+	err := CloseWebsocket(conn)
+	if err != nil {
+		log.Println(fmt.Errorf("failed closing websocket: %w", err))
+	}
+}
 
 func CloseWebsocket(conn *websocket.Conn) error {
 	deadline := time.Now().Add(time.Minute)

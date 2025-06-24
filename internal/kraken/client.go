@@ -26,7 +26,7 @@ type Kraken interface {
 	Close() error
 	GetAccountBalance() (*map[string]string, error)
 	GetOHCLData(pair string, interval uint16) (*map[string]any, error)
-	CandlesWS() error
+	CandlesWS(method string, symbol string, interval uint16) error
 }
 type kraken struct {
 	apiKey     string
@@ -245,20 +245,20 @@ func (k *kraken) GetOHCLData(pair string, interval uint16) (*map[string]any, err
 type candlesWSParamsParams struct {
 	Channel  string   `json:"channel"`
 	Symbol   []string `json:"symbol"`
-	Interval uint8    `json:"interval"`
+	Interval uint16   `json:"interval"`
 }
 type CandlesWSParams struct {
 	Method string                `json:"method"`
 	Params candlesWSParamsParams `json:"params"`
 }
 
-func (k *kraken) CandlesWS() error {
+func (k *kraken) CandlesWS(method string, symbol string, interval uint16) error {
 	var params = CandlesWSParams{
-		Method: "subscribe",
+		Method: method,
 		Params: candlesWSParamsParams{
 			Channel:  "ohlc",
-			Symbol:   []string{"BTC/USD"},
-			Interval: 1,
+			Symbol:   []string{symbol},
+			Interval: interval,
 		},
 	}
 	err := k.conn.WriteJSON(params)

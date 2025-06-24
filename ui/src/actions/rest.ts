@@ -1,8 +1,8 @@
 import axios from "axios";
+import type {ChartData} from "@/lib/types.ts";
 
 const api_url = import.meta.env.MODE === "development" ? "http://localhost:1323/api" : "/api";
 
-type ChartData = [time: number, open: string, high: string, low: string, close: string, vwap: string, volume: string, count: number];
 
 export interface BTCChart{
     XXBTZUSD: ChartData[]
