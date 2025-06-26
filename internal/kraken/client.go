@@ -2,7 +2,6 @@ package kraken
 
 import (
 	"bytes"
-	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/sha512"
@@ -12,27 +11,21 @@ import (
 	"io"
 	"kasegu/external/helpers"
 	"net/http"
-	"strings"
 	"time"
-
-	"github.com/gorilla/websocket"
 )
 
-const BaseURL = "https://api.kraken.com"
-const PublicWSURL = "wss://ws.kraken.com/v2"
-const UserAgent = "KaseguKrakenClient/0.1.0"
+const (
+	BaseURL   = "https://api.kraken.com"
+	UserAgent = "KaseguKrakenClient/0.1.0"
+)
 
 type Kraken interface {
-	Close() error
 	GetAccountBalance() (*map[string]string, error)
 	GetOHCLData(pair string, interval uint16) (*map[string]any, error)
-	CandlesWS(method string, symbol string, interval uint16) error
 }
 type kraken struct {
 	apiKey     string
 	privateKey string
-	conn       *websocket.Conn
-	loopCancel *context.CancelFunc
 }
 
 type requestParams struct {
@@ -126,144 +119,23 @@ func request(rp *requestParams) (*http.Response, error) {
 	return http.DefaultClient.Do(req)
 }
 
-func openConnection(endpoint string) (*websocket.Conn, error) {
-	c, _, err := websocket.DefaultDialer.Dial(endpoint, nil)
+func NewClient() (Kraken, error) {
+	kClient, err := newClient()
 	if err != nil {
-		return nil, fmt.Errorf("failed to establish websocket connection to endpoint %s: %w", endpoint, err)
+		return nil, err
 	}
-	return c, nil
+	return kClient, nil
 }
 
-func wsLoop(conn *websocket.Conn, ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			fmt.Println("closing loop")
-			return
-		default:
-			_, p, err := conn.ReadMessage()
-			if err != nil {
-				return
-			}
-			fmt.Println("Got message:", string(p))
-		}
-	}
-}
-
-func New() (Kraken, error) {
+func newClient() (*kraken, error) {
 	const apiKeyEnvName = "KRAKEN_API_KEY"
 	const privateKeyEnvName = "KRAKEN_PRIVATE_KEY"
 	envMap, err := helpers.LoadEnv([]string{apiKeyEnvName, privateKeyEnvName})
 	if err != nil {
 		return nil, fmt.Errorf("error loading api keys needed for Kraken: %w", err)
 	}
-	c, err := openConnection(PublicWSURL)
-	if err != nil {
-		return nil, fmt.Errorf("error opening Kraken connection: %w", err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	go wsLoop(c, ctx)
 	return &kraken{
 		apiKey:     (*envMap)[apiKeyEnvName],
 		privateKey: (*envMap)[privateKeyEnvName],
-		conn:       c,
-		loopCancel: &cancel,
 	}, nil
-}
-
-func (k *kraken) Close() error {
-	fmt.Println("closing connection gracefully")
-	(*k.loopCancel)()
-	err := helpers.CloseWebsocket(k.conn)
-	if err != nil {
-		return fmt.Errorf("error closing Kraken connection: %w", err)
-	}
-	fmt.Println("closed connection gracefully")
-	return nil
-}
-
-func (k *kraken) GetAccountBalance() (*map[string]string, error) {
-	resp, err := request(&requestParams{
-		method:      "POST",
-		path:        "/0/private/Balance",
-		publicKey:   k.apiKey,
-		privateKey:  k.privateKey,
-		environment: BaseURL,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("error getting account balance from endpoint: %w", err)
-	}
-	defer helpers.CheckedClose(resp.Body)
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("error reading account balance: %w", err)
-	}
-	var balance struct {
-		Error  []string          `json:"error"`
-		Result map[string]string `json:"result"`
-	}
-	if err := json.Unmarshal(data, &balance); err != nil {
-		return nil, fmt.Errorf("error parsing the response: %w", err)
-	}
-	if len(balance.Error) > 0 {
-		return nil, fmt.Errorf("error getting account balance: %s", strings.Join(balance.Error, ","))
-	}
-	return &balance.Result, nil
-}
-
-func (k *kraken) GetOHCLData(pair string, interval uint16) (*map[string]any, error) {
-	resp, err := request(&requestParams{
-		method: "GET",
-		path:   "/0/public/OHLC",
-		query: map[string]any{
-			"pair":     pair,
-			"interval": interval,
-		},
-		environment: BaseURL,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("error getting OHCL data from endpoint: %w", err)
-	}
-	defer helpers.CheckedClose(resp.Body)
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("error reading OHCL data: %w", err)
-	}
-	var ohcl struct {
-		Error  []string       `json:"error"`
-		Result map[string]any `json:"result"`
-	}
-	if err := json.Unmarshal(data, &ohcl); err != nil {
-		return nil, fmt.Errorf("error parsing OHCL data: %w", err)
-	}
-	if len(ohcl.Error) > 0 {
-		return nil, fmt.Errorf("error getting : %s", strings.Join(ohcl.Error, ","))
-	}
-	return &ohcl.Result, nil
-}
-
-type candlesWSParamsParams struct {
-	Channel  string   `json:"channel"`
-	Symbol   []string `json:"symbol"`
-	Interval uint16   `json:"interval"`
-}
-type CandlesWSParams struct {
-	Method string                `json:"method"`
-	Params candlesWSParamsParams `json:"params"`
-}
-
-func (k *kraken) CandlesWS(method string, symbol string, interval uint16) error {
-	var params = CandlesWSParams{
-		Method: method,
-		Params: candlesWSParamsParams{
-			Channel:  "ohlc",
-			Symbol:   []string{symbol},
-			Interval: interval,
-		},
-	}
-	err := k.conn.WriteJSON(params)
-	if err != nil {
-		return fmt.Errorf("error sending candles request: %w", err)
-	}
-	return nil
 }

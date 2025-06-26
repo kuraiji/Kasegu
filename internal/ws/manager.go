@@ -10,19 +10,25 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-type WebsocketManager interface{}
+type WebsocketManager interface {
+	ServeWebsocket(c echo.Context) error
+}
 
 type websocketManager struct {
 	clients  map[*websocketClient]bool
 	upgrader *websocket.Upgrader
 	sync.Mutex
+	handlers map[string]eventHandler
 }
 
 func NewManager(upgrader *websocket.Upgrader) WebsocketManager {
-	return &websocketManager{
+	m := &websocketManager{
 		clients:  make(map[*websocketClient]bool),
 		upgrader: upgrader,
+		handlers: make(map[string]eventHandler),
 	}
+	m.setupEventHandlers()
+	return m
 }
 
 func (wm *websocketManager) ServeWebsocket(c echo.Context) error {
@@ -33,6 +39,8 @@ func (wm *websocketManager) ServeWebsocket(c echo.Context) error {
 	}
 	wc := newClient(ws, wm)
 	wm.addClient(wc)
+	go wc.readMessages()
+	go wc.writeMessages()
 	return nil
 }
 
@@ -48,5 +56,25 @@ func (wm *websocketManager) removeClient(wsClient *websocketClient) {
 	if _, ok := wm.clients[wsClient]; ok {
 		helpers.CheckedWSClose(wsClient.conn)
 		delete(wm.clients, wsClient)
+	}
+}
+
+func (wm *websocketManager) setupEventHandlers() {
+	wm.handlers[eventSendMessage] = sendMessage
+}
+
+func sendMessage(event *event, c *websocketClient) error {
+	fmt.Println(*event)
+	return nil
+}
+
+func (wm *websocketManager) routeEvent(e *event, c *websocketClient) error {
+	if handler, ok := wm.handlers[e.Type]; ok {
+		if err := handler(e, c); err != nil {
+			return fmt.Errorf("handle event %s error: %v", e.Type, err)
+		}
+		return nil
+	} else {
+		return fmt.Errorf("unknown event type %s", e.Type)
 	}
 }

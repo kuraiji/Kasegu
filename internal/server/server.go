@@ -1,9 +1,9 @@
 package server
 
 import (
-	"fmt"
 	"kasegu/external/helpers"
 	"kasegu/internal/kraken"
+	"kasegu/internal/ws"
 	"log"
 	"net/http"
 	"os"
@@ -23,19 +23,20 @@ func Loop() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	kClient, err := kraken.New()
+	kClient, err := kraken.NewClient()
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer helpers.CheckedClose(kClient)
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-c
-		helpers.CheckedClose(kClient)
 		os.Exit(1)
 	}()
-	upgrader := websocket.Upgrader{}
+	upgrader := websocket.Upgrader{
+		ReadBufferSize:  1024,
+		WriteBufferSize: 1024,
+	}
 	e := echo.New()
 	if (*envs)["ENV"] == "development" {
 		e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
@@ -43,43 +44,15 @@ func Loop() {
 			AllowHeaders: []string{echo.HeaderOrigin, echo.HeaderContentType, echo.HeaderAccept},
 		}))
 		upgrader.CheckOrigin = func(r *http.Request) bool {
-			origin := r.Header.Get("Origin")
-			return origin == devUrl
+			return true
 		}
 	}
+	wsManager := ws.NewManager(&upgrader)
 	//e.Use(middleware.Logger())
 	//e.Use(middleware.Recover())
-	e.GET("/ws", func(c echo.Context) error { return websocketRequest(c, upgrader) })
+	e.GET("/ws", wsManager.ServeWebsocket)
 	e.GET("/api/chart", func(c echo.Context) error { return getChart(c, &kClient) })
 	e.Logger.Fatal(e.Start(":1323"))
-}
-
-func websocketRequest(c echo.Context, upgrader websocket.Upgrader) error {
-	fmt.Println("websocket request")
-	ws, err := upgrader.Upgrade(c.Response(), c.Request(), nil)
-	if err != nil {
-		return c.String(http.StatusBadRequest, err.Error())
-	}
-	defer helpers.CheckedWSClose(ws)
-	for {
-		err := ws.WriteMessage(websocket.TextMessage, []byte("hello world"))
-		if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-			fmt.Println("websocket closed")
-			return nil
-		} else if err != nil {
-			c.Logger().Error(err)
-			return nil
-		}
-		_, msg, err := ws.ReadMessage()
-		if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-			fmt.Println("websocket closed")
-			return nil
-		} else if err != nil {
-			c.Logger().Error(err)
-			return nil
-		}
-		fmt.Println(string(msg))
-	}
 }
 
 func getChart(c echo.Context, k *kraken.Kraken) error {
