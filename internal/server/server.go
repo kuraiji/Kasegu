@@ -50,6 +50,7 @@ func Loop() {
 	}()
 	//e.Use(middleware.Logger())
 	//e.Use(middleware.Recover())
+	e.IPExtractor = echo.ExtractIPDirect()
 	e.GET("/ws", wsManager.ServeWebsocket)
 	e.GET("/api/chart", func(c echo.Context) error { return getChart(c, &kClient) })
 	e.Logger.Fatal(e.Start(":1323"))

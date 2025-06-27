@@ -1,6 +1,7 @@
 import {createChart, CandlestickSeries, ColorType, type CandlestickData, type UTCTimestamp} from "lightweight-charts";
 import {useEffect, useRef} from "react";
 import {type ChartData, DestructureChartData, type LiveChartData} from "@/lib/types.ts";
+import {getUTCDate} from "@/lib/helpers.ts";
 
 const ws_url = import.meta.env.MODE === "development" ? "ws://localhost:1323/ws" : "/ws";
 
@@ -74,7 +75,7 @@ export default function Chart({chartData, chartColors}: {chartData: ChartData[],
                 console.log(data)
                 const index = data.payload.data.length - 1
                 //TODO: The Date takes TZ into account, undo that so it is UTC+0
-                const d = new Date(data.payload.data[index].interval_begin)
+                const d = getUTCDate(new Date(data.payload.data[index].interval_begin))
                 console.log(d)
                 const ds = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`;
                 console.log(ds)
