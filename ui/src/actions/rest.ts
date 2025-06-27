@@ -10,6 +10,7 @@ export interface BTCChart{
 }
 
 export async function getChart(pair: string, interval: number): Promise<BTCChart | null> {
+    console.log("Getting Chart");
     try {
         return await axios.get(api_url + "/chart?pair=" + pair + "&interval=" + interval,
             {}).then(res => {

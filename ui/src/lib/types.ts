@@ -21,3 +21,40 @@ export function DestructureChartData(data: ChartData): CDDestructured {
         count: data[7],
     }
 }
+
+export interface LiveChartData {
+    type: string;
+    payload: {
+        channel: string;
+        type: string;
+        timestamp: string;
+        data: LiveChartPayload[]
+    }
+}
+
+export interface LiveChartPayload {
+    symbol: string;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    trades: number;
+    volume: number;
+    vwap: number;
+    interval_begin: string;
+    interval: number;
+    timestamp: string;
+}
+
+export function LiveChartDataToChartData(liveData: LiveChartPayload): ChartData {
+    return [
+        (new Date(liveData.interval_begin).getTime()) / 1000,
+        String(liveData.open),
+        String(liveData.high),
+        String(liveData.low),
+        String(liveData.close),
+        String(liveData.vwap),
+        String(liveData.volume),
+        liveData.trades
+    ];
+}

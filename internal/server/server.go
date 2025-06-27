@@ -27,12 +27,6 @@ func Loop() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		<-c
-		os.Exit(1)
-	}()
 	upgrader := websocket.Upgrader{
 		ReadBufferSize:  1024,
 		WriteBufferSize: 1024,
@@ -48,6 +42,12 @@ func Loop() {
 		}
 	}
 	wsManager := ws.NewManager(&upgrader)
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-c
+		os.Exit(1)
+	}()
 	//e.Use(middleware.Logger())
 	//e.Use(middleware.Recover())
 	e.GET("/ws", wsManager.ServeWebsocket)

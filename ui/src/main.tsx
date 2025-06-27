@@ -10,15 +10,11 @@ import { routeTree } from './routeTree.gen'
 import './styles.css'
 import reportWebVitals from './reportWebVitals.ts'
 
-const ws_url = import.meta.env.MODE === "development" ? "ws://localhost:1323/ws" : "/ws";
-const socket = new WebSocket(ws_url)
-
 // Create a new router instance
 const router = createRouter({
   routeTree,
   context: {
     ...TanStackQueryProvider.getContext(),
-    socket:  socket
   },
   defaultPreload: 'intent',
   scrollRestoration: true,

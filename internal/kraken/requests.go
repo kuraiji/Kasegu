@@ -6,34 +6,31 @@ import (
 	"log"
 )
 
+var (
+	RequestHandlerMap = map[string]RequestHandler{
+		"ohlc": CandleRequest,
+	}
+)
+
 type BaseRequest interface {
 	send(wsc *wsClient) error
 	subscribe(wsc *wsClient) error
 	unsubscribe(wsc *wsClient) error
 }
 
-type baseRequest struct {
-	Method string          `json:"method"`
-	Params json.RawMessage `json:"params,omitempty"`
-}
+type RequestHandler func(req json.RawMessage) (BaseRequest, error)
 
-func (br *baseRequest) subscribe(wsc *wsClient) error {
-	br.Method = "subscribe"
-	return br.send(wsc)
-}
-
-func (br *baseRequest) unsubscribe(wsc *wsClient) error {
-	br.Method = "unsubscribe"
-	return br.send(wsc)
-}
-
-func (br *baseRequest) send(wsc *wsClient) error {
-	log.Println(br.Params)
-	err := wsc.conn.WriteJSON(br)
+func CandleRequest(req json.RawMessage) (BaseRequest, error) {
+	var bReq CandlesRequest
+	err := json.Unmarshal(req, &bReq)
 	if err != nil {
-		return fmt.Errorf("error sending request: %w", err)
+		return nil, fmt.Errorf("failed to unmarshal request: %w", err)
 	}
-	return nil
+	return &bReq, nil
+}
+
+type baseRequest struct {
+	Method string `json:"method"`
 }
 
 type CandlesParams struct {
@@ -44,4 +41,24 @@ type CandlesParams struct {
 type CandlesRequest struct {
 	baseRequest
 	Params CandlesParams `json:"params"`
+}
+
+func (cr *CandlesRequest) subscribe(wsc *wsClient) error {
+	cr.Method = "subscribe"
+	return cr.send(wsc)
+}
+
+func (cr *CandlesRequest) unsubscribe(wsc *wsClient) error {
+	cr.Method = "unsubscribe"
+	return cr.send(wsc)
+}
+
+func (cr *CandlesRequest) send(wsc *wsClient) error {
+	log.Println("Called Candles method")
+	log.Println(cr)
+	err := wsc.conn.WriteJSON(cr)
+	if err != nil {
+		return fmt.Errorf("error sending request: %w", err)
+	}
+	return nil
 }

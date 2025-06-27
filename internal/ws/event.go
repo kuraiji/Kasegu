@@ -13,6 +13,7 @@ type eventHandler func(event *event, c *websocketClient) error
 
 const (
 	eventSendMessage = "send_message"
+	eventKraken      = "kraken"
 )
 
 type sendMessageEvent struct {

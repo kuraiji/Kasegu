@@ -1,8 +1,11 @@
 package ws
 
 import (
+	"context"
 	"fmt"
 	"kasegu/external/helpers"
+	"kasegu/internal/kraken"
+	"log"
 	"net/http"
 	"sync"
 
@@ -18,14 +21,14 @@ type websocketManager struct {
 	clients  map[*websocketClient]bool
 	upgrader *websocket.Upgrader
 	sync.Mutex
-	handlers map[string]eventHandler
+	evHandlers map[string]eventHandler
 }
 
 func NewManager(upgrader *websocket.Upgrader) WebsocketManager {
 	m := &websocketManager{
-		clients:  make(map[*websocketClient]bool),
-		upgrader: upgrader,
-		handlers: make(map[string]eventHandler),
+		clients:    make(map[*websocketClient]bool),
+		upgrader:   upgrader,
+		evHandlers: make(map[string]eventHandler),
 	}
 	m.setupEventHandlers()
 	return m
@@ -60,7 +63,8 @@ func (wm *websocketManager) removeClient(wsClient *websocketClient) {
 }
 
 func (wm *websocketManager) setupEventHandlers() {
-	wm.handlers[eventSendMessage] = sendMessage
+	wm.evHandlers[eventSendMessage] = sendMessage
+	wm.evHandlers[eventKraken] = sendKraken
 }
 
 func sendMessage(event *event, c *websocketClient) error {
@@ -68,8 +72,53 @@ func sendMessage(event *event, c *websocketClient) error {
 	return nil
 }
 
+func sendKraken(event *event, c *websocketClient) error {
+	method, channel, err := kraken.GetMethodAndChannelFromByteArray(event.Payload)
+	if err != nil {
+		return err
+	}
+	br, ok := kraken.RequestHandlerMap[channel]
+	if !ok {
+		return fmt.Errorf("channel %s not supported", channel)
+	}
+	msg, err := br(event.Payload)
+	if err != nil {
+		return err
+	}
+	if method == "subscribe" {
+		if c.kClient == nil {
+			err := c.createKrakenClient()
+			if err != nil {
+				return fmt.Errorf("create kraken client error: %v", err)
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			go c.deliverKrakenEvents(ctx)
+			c.cancel = &cancel
+		}
+		err := (*c.kClient).Subscribe(channel, msg)
+		if err != nil {
+			return fmt.Errorf("subscribe error: %v", err)
+		}
+	} else if method == "unsubscribe" {
+		if c.kClient == nil {
+			log.Printf("Kraken client doesn't exist")
+			return nil
+		}
+		err := (*c.kClient).Unsubscribe(channel)
+		if err != nil {
+			return fmt.Errorf("unsubscribe error: %v", err)
+		}
+		if !(*c.kClient).AreThereActiveSubscriptions() {
+			c.destroyKrakenClient()
+		}
+	} else {
+		return fmt.Errorf("method %s not supported", method)
+	}
+	return nil
+}
+
 func (wm *websocketManager) routeEvent(e *event, c *websocketClient) error {
-	if handler, ok := wm.handlers[e.Type]; ok {
+	if handler, ok := wm.evHandlers[e.Type]; ok {
 		if err := handler(e, c); err != nil {
 			return fmt.Errorf("handle event %s error: %v", e.Type, err)
 		}

@@ -3,6 +3,7 @@ package kraken
 import (
 	"encoding/json"
 	"fmt"
+	"kasegu/external/helpers"
 	"log"
 
 	"github.com/gorilla/websocket"
@@ -15,6 +16,9 @@ const (
 type WsClient interface {
 	Subscribe(channel string, br BaseRequest) error
 	Unsubscribe(channel string) error
+	Close() error
+	AreThereActiveSubscriptions() bool
+	BindResponse() *chan Event
 }
 
 type wsClient struct {
@@ -40,6 +44,9 @@ func openConnection(endpoint string) (*websocket.Conn, error) {
 }
 
 func (wsc *wsClient) readMessages() {
+	wsc.res = make(chan Event)
+	defer close(wsc.res)
+	defer helpers.CheckedClose(wsc)
 	for {
 		_, msg, err := wsc.conn.ReadMessage()
 		if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
@@ -70,14 +77,24 @@ func NewWebSocketClient() (WsClient, error) {
 	wsC := wsClient{
 		conn:     connection,
 		kraken:   *kClient,
-		res:      make(chan Event),
 		handlers: make(map[string]BaseRequest),
 	}
 	go wsC.readMessages()
 	return &wsC, nil
 }
 
+func (wsc *wsClient) Close() error {
+	return helpers.CloseWebsocket(wsc.conn)
+}
+
 func (wsc *wsClient) Subscribe(channel string, br BaseRequest) error {
+	_, ok := wsc.handlers[channel]
+	if ok {
+		var err = wsc.Unsubscribe(channel)
+		if err != nil {
+			log.Printf("kraken websocket unsubscribe error: %v", err)
+		}
+	}
 	if err := br.subscribe(wsc); err != nil {
 		return fmt.Errorf("kraken websocket subscription error: %w", err)
 	}
@@ -96,6 +113,29 @@ func (wsc *wsClient) Unsubscribe(channel string) error {
 	}
 	delete(wsc.handlers, channel)
 	return nil
+}
+
+func GetMethodAndChannelFromByteArray(req []byte) (string, string, error) {
+	type BasicParam struct {
+		Channel string `json:"channel"`
+	}
+	type BasicRequest struct {
+		Method string     `json:"method"`
+		Param  BasicParam `json:"params"`
+	}
+	var bRequest BasicRequest
+	if err := json.Unmarshal(req, &bRequest); err != nil {
+		return "", "", fmt.Errorf("kraken websocket unmarshal error: %w", err)
+	}
+	return bRequest.Method, bRequest.Param.Channel, nil
+}
+
+func (wsc *wsClient) AreThereActiveSubscriptions() bool {
+	return len(wsc.handlers) > 0
+}
+
+func (wsc *wsClient) BindResponse() *chan Event {
+	return &wsc.res
 }
 
 /*

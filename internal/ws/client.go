@@ -1,7 +1,11 @@
 package ws
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
+	"kasegu/external/helpers"
+	"kasegu/internal/kraken"
 	"log"
 	"time"
 
@@ -17,6 +21,8 @@ type websocketClient struct {
 	conn    *websocket.Conn
 	manager *websocketManager
 	egress  chan event
+	kClient *kraken.WsClient
+	cancel  *context.CancelFunc
 }
 
 func newClient(conn *websocket.Conn, wsManager *websocketManager) *websocketClient {
@@ -24,6 +30,9 @@ func newClient(conn *websocket.Conn, wsManager *websocketManager) *websocketClie
 }
 
 func (c *websocketClient) cleanup() {
+	if c.kClient != nil {
+		c.destroyKrakenClient()
+	}
 	c.manager.removeClient(c)
 }
 
@@ -83,6 +92,48 @@ func (c *websocketClient) writeMessages() {
 				log.Printf("failed to send ping: %v\n", err)
 				return
 			}
+		}
+	}
+}
+
+func (c *websocketClient) createKrakenClient() error {
+	client, err := kraken.NewWebSocketClient()
+	if err != nil {
+		return fmt.Errorf("failed to create kraken websocket client: %w", err)
+	}
+	c.kClient = &client
+	return nil
+}
+
+func (c *websocketClient) destroyKrakenClient() {
+	if c.cancel != nil {
+		(*c.cancel)()
+		c.cancel = nil
+	}
+	helpers.CheckedClose(*c.kClient)
+	c.kClient = nil
+	return
+}
+
+func (c *websocketClient) deliverKrakenEvents(ctx context.Context) {
+	for {
+		select {
+		case ev, ok := <-(*(*c.kClient).BindResponse()):
+			if !ok {
+				log.Println("kraken event delivery channel closed")
+				return
+			}
+			evJson, err := json.Marshal(ev)
+			if err != nil {
+				log.Printf("json marshal error: %v\n", err)
+				continue
+			}
+			c.egress <- event{
+				Type:    eventKraken,
+				Payload: evJson,
+			}
+		case <-ctx.Done():
+			return
 		}
 	}
 }

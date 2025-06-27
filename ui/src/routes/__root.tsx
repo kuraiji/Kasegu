@@ -6,7 +6,6 @@ import type { QueryClient } from '@tanstack/react-query'
 
 interface MyRouterContext {
     queryClient: QueryClient
-    socket: WebSocket
 }
 
 export const Route = createRootRouteWithContext<MyRouterContext>()({
