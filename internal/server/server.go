@@ -1,8 +1,10 @@
 package server
 
 import (
+	"fmt"
 	"kasegu/external/helpers"
 	"kasegu/internal/kraken"
+	tradeBot "kasegu/internal/trade-bot"
 	"kasegu/internal/ws"
 	"log"
 	"net/http"
@@ -10,10 +12,12 @@ import (
 	"os/signal"
 	"strconv"
 	"syscall"
+	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	"github.com/robfig/cron/v3"
 )
 
 const devUrl = "http://localhost:3000"
@@ -41,6 +45,18 @@ func Loop() {
 			return true
 		}
 	}
+	tb, err := tradeBot.New()
+	fmt.Println(tb)
+	if err != nil {
+		log.Fatal(err)
+	}
+	l, err := time.LoadLocation("UTC")
+	cr := cron.New(cron.WithLocation(l))
+	_, err = cr.AddFunc("1 0 * * *", func() { fmt.Println("Cron job running") })
+	if err != nil {
+		log.Fatal(err)
+	}
+	cr.Start()
 	wsManager := ws.NewManager(&upgrader)
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)

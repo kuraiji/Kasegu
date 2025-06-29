@@ -22,6 +22,7 @@ const (
 type Kraken interface {
 	GetAccountBalance() (*map[string]string, error)
 	GetOHCLData(pair string, interval uint16) (*map[string]any, error)
+	AddOrder(pair string, volume string, orderType string) error
 }
 type kraken struct {
 	apiKey     string

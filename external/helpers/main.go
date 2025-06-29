@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	urlMod "net/url"
 	"os"
@@ -209,4 +210,12 @@ func MapToURLValues(m map[string]any) (urlMod.Values, error) {
 
 func IsZeroOfUnderlyingType(x interface{}) bool {
 	return reflect.DeepEqual(x, reflect.Zero(reflect.TypeOf(x)).Interface())
+}
+
+func NearlyEqual(x float64, y float64, t float64) bool {
+	return math.Abs(x-y) <= t
+}
+
+func UnixTimestampToUTCTime(unixTimestamp float64) time.Time {
+	return time.Unix(int64(unixTimestamp), 0).UTC()
 }
