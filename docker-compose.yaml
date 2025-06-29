@@ -1,0 +1,18 @@
+services:
+  kasegu:
+    container_name: "kasegu"
+    build:
+      context: .
+      tags:
+        - "kasegu:latest"
+    ports:
+      - "1323:1323"
+    env_file: ".env"
+    restart: 'unless-stopped'
+    environment:
+      - ENV=production
+      - COINGECKO_API_KEY=${COINGECKO_API_KEY}
+      - KRAKEN_API_KEY=${KRAKEN_API_KEY}
+      - KRAKEN_PRIVATE_KEY=${KRAKEN_PRIVATE_KEY}
+    volumes:
+      - ~/.config/kasegu:/gobs

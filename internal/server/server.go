@@ -3,6 +3,7 @@ package server
 import (
 	"fmt"
 	"kasegu/external/helpers"
+	"kasegu/internal/data"
 	"kasegu/internal/kraken"
 	tradeBot "kasegu/internal/trade-bot"
 	"kasegu/internal/ws"
@@ -23,11 +24,26 @@ import (
 const devUrl = "http://localhost:3000"
 
 func Loop() {
+
 	envs, err := helpers.LoadEnv([]string{"ENV"})
 	if err != nil {
 		log.Fatal(err)
 	}
-	kClient, err := kraken.NewClient()
+	tbd, err := data.LoadData()
+	defer func(d *data.Data) {
+		err := data.SaveData(d)
+		if err != nil {
+			fmt.Println(err)
+		}
+	}(tbd)
+	if err != nil {
+		log.Fatal(err)
+	}
+	kClient, err := kraken.NewClient(tbd.KrakenApiKey, tbd.KrakenPrivateKey)
+	if err != nil {
+		log.Fatal(err)
+	}
+	_, err = kClient.GetAccountBalance()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -45,23 +61,28 @@ func Loop() {
 			return true
 		}
 	}
-	tb, err := tradeBot.New()
-	fmt.Println(tb)
+	tb, err := tradeBot.New(tbd.KrakenApiKey, tbd.KrakenPrivateKey)
 	if err != nil {
 		log.Fatal(err)
 	}
 	l, err := time.LoadLocation("UTC")
 	cr := cron.New(cron.WithLocation(l))
-	_, err = cr.AddFunc("1 0 * * *", func() { fmt.Println("Cron job running") })
+	_, err = cr.AddFunc("1 0 * * *", func() { tb.Action() })
 	if err != nil {
 		log.Fatal(err)
 	}
-	cr.Start()
-	wsManager := ws.NewManager(&upgrader)
+	if tbd.EnableBot {
+		cr.Start()
+	}
+	wsManager := ws.NewManager(&upgrader, tbd)
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-c
+		err = data.SaveData(tbd)
+		if err != nil {
+			fmt.Println(err)
+		}
 		os.Exit(1)
 	}()
 	//e.Use(middleware.Logger())
@@ -69,6 +90,9 @@ func Loop() {
 	e.IPExtractor = echo.ExtractIPDirect()
 	e.GET("/ws", wsManager.ServeWebsocket)
 	e.GET("/api/chart", func(c echo.Context) error { return getChart(c, &kClient) })
+	if (*envs)["ENV"] == "production" {
+		e.Static("/*", "static")
+	}
 	e.Logger.Fatal(e.Start(":1323"))
 }
 
@@ -85,9 +109,9 @@ func getChart(c echo.Context, k *kraken.Kraken) error {
 	if err != nil {
 		return c.String(http.StatusBadRequest, "interval needs to be an integer")
 	}
-	data, err := (*k).GetOHCLData(pair, uint16(i))
+	ohclData, err := (*k).GetOHCLData(pair, uint16(i))
 	if err != nil {
-		return c.String(http.StatusInternalServerError, "failed getting data")
+		return c.String(http.StatusInternalServerError, "failed getting ohclData")
 	}
-	return c.JSON(http.StatusOK, data)
+	return c.JSON(http.StatusOK, ohclData)
 }

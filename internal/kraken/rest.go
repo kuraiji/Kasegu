@@ -147,8 +147,8 @@ func (k *kraken) AddOrder(pair string, volume string, transactionType string) er
 		return fmt.Errorf("error reading transaction: %w", err)
 	}
 	var balance struct {
-		Error  []string          `json:"error"`
-		Result map[string]string `json:"result"`
+		Error  []string        `json:"error"`
+		Result json.RawMessage `json:"result"`
 	}
 	if err := json.Unmarshal(data, &balance); err != nil {
 		return fmt.Errorf("error parsing the response: %w", err)
@@ -157,4 +157,46 @@ func (k *kraken) AddOrder(pair string, volume string, transactionType string) er
 		return fmt.Errorf("error adding order: %s", strings.Join(balance.Error, ","))
 	}
 	return nil
+}
+
+type TickerInfo struct {
+	A []string `json:"a"`
+	B []string `json:"b"`
+	C []string `json:"c"`
+	V []string `json:"v"`
+	P []string `json:"p"`
+	T []int32  `json:"t"`
+	L []string `json:"l"`
+	H []string `json:"h"`
+	O string   `json:"o"`
+}
+
+func (k *kraken) GetTickerInformation(pair string) (*map[string]TickerInfo, error) {
+	resp, err := request(&requestParams{
+		method:      "GET",
+		path:        "/0/public/Ticker",
+		environment: BaseURL,
+		query: map[string]any{
+			"pair": pair,
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("error getting ticker: %w", err)
+	}
+	defer helpers.CheckedClose(resp.Body)
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("error reading ticker: %w", err)
+	}
+	var tickerInfo struct {
+		Error  []string              `json:"error"`
+		Result map[string]TickerInfo `json:"result"`
+	}
+	if err := json.Unmarshal(data, &tickerInfo); err != nil {
+		return nil, fmt.Errorf("error parsing ticker: %w", err)
+	}
+	if len(tickerInfo.Error) > 0 {
+		return nil, fmt.Errorf("error getting ticker: %s", strings.Join(tickerInfo.Error, ","))
+	}
+	return &tickerInfo.Result, nil
 }

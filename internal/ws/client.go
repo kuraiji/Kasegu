@@ -96,8 +96,8 @@ func (c *websocketClient) writeMessages() {
 	}
 }
 
-func (c *websocketClient) createKrakenClient() error {
-	client, err := kraken.NewWebSocketClient()
+func (c *websocketClient) createKrakenClient(apiKeyEnv string, privateKeyEnv string) error {
+	client, err := kraken.NewWebSocketClient(apiKeyEnv, privateKeyEnv)
 	if err != nil {
 		return fmt.Errorf("failed to create kraken websocket client: %w", err)
 	}

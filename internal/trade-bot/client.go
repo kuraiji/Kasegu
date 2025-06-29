@@ -5,24 +5,27 @@ import (
 	"kasegu/external/algorithms"
 	"kasegu/internal/kraken"
 	"log"
+	"strconv"
 )
 
 const (
 	baseCurrency = "ZUSD"
-	quoteCoin    = "XXBT"
-	tradePair    = "BTC/USD"
+	quoteCoin    = "PENGU"
+	tradePair    = "PENGU/USD"
 )
 
 type Client interface {
 	Action()
+	Buy()
+	Sell()
 }
 
 type client struct {
 	kClient *kraken.Kraken
 }
 
-func New() (Client, error) {
-	c, err := kraken.NewClient()
+func New(apiKeyEnv string, privateKeyEnv string) (Client, error) {
+	c, err := kraken.NewClient(apiKeyEnv, privateKeyEnv)
 	if err != nil {
 		return nil, fmt.Errorf("could not create kraken client: %w", err)
 	}
@@ -30,7 +33,8 @@ func New() (Client, error) {
 }
 
 func (c *client) Action() {
-	data, err := (*c.kClient).GetOHCLData("BTC/USD", 1440)
+	log.Printf("Commening Action, BaseCurrency: %s | QuoteCoin: %s | TradePair: %s", baseCurrency, quoteCoin, tradePair)
+	data, err := (*c.kClient).GetOHCLData(tradePair, 1440)
 	if err != nil {
 		//TODO: Make it keep trying, probably
 		log.Printf("could not get data from kraken: %v", err)
@@ -53,6 +57,7 @@ func (c *client) Action() {
 	mi := uint32(len(*masei) - 1)
 	index := (*masei)[mi].Index
 	pi := len(*p) - 1
+	log.Printf("MaseiIndex: %d | PIndex: %d", index, uint32(pi))
 	if index == uint32(pi) {
 		if (*masei)[mi].IsLongCond {
 			c.Buy()
@@ -73,7 +78,28 @@ func (c *client) addOrder(pair string, asset string, transactionType string) err
 	if !ok {
 		return fmt.Errorf("could not get account to invest")
 	}
-	err = (*c.kClient).AddOrder(pair, amt, "buy")
+	if transactionType == "buy" {
+		ti, err := (*c.kClient).GetTickerInformation(pair)
+		if err != nil {
+			return fmt.Errorf("could not get ticker information: %w", err)
+		}
+		fmt.Println(ti)
+		a, ok := (*ti)[pair]
+		if !ok {
+			return fmt.Errorf("ticker info didn't have ask values")
+		}
+		p, err := strconv.ParseFloat(a.A[0], 64)
+		if err != nil {
+			return fmt.Errorf("could not parse price: %w", err)
+		}
+		af, err := strconv.ParseFloat(amt, 64)
+		if err != nil {
+			return fmt.Errorf("could not parse amount: %w", err)
+		}
+		amt = fmt.Sprint(af / p)
+		fmt.Println(amt)
+	}
+	err = (*c.kClient).AddOrder(pair, amt, transactionType)
 	if err != nil {
 		log.Printf("order had an error: %v, retrying...", err)
 		for i := 1; i <= 3; i++ {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"kasegu/external/helpers"
+	"kasegu/internal/data"
 	"kasegu/internal/kraken"
 	"log"
 	"net/http"
@@ -23,14 +24,16 @@ type websocketManager struct {
 	upgrader *websocket.Upgrader
 	sync.Mutex
 	evHandlers map[string]eventHandler
+	tbd        *data.Data
 }
 
-func NewManager(upgrader *websocket.Upgrader) WebsocketManager {
+func NewManager(upgrader *websocket.Upgrader, d *data.Data) WebsocketManager {
 	m := &websocketManager{
 		clients:    make(map[*websocketClient]bool),
 		ips:        make(map[string]*websocketClient),
 		upgrader:   upgrader,
 		evHandlers: make(map[string]eventHandler),
+		tbd:        d,
 	}
 	m.setupEventHandlers()
 	return m
@@ -96,7 +99,7 @@ func sendKraken(event *event, c *websocketClient) error {
 	}
 	if method == "subscribe" {
 		if c.kClient == nil {
-			err := c.createKrakenClient()
+			err := c.createKrakenClient(c.manager.tbd.KrakenApiKey, c.manager.tbd.KrakenApiKey)
 			if err != nil {
 				return fmt.Errorf("create kraken client error: %v", err)
 			}

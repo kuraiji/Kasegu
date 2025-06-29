@@ -65,12 +65,12 @@ func (wsc *wsClient) readMessages() {
 	}
 }
 
-func NewWebSocketClient() (WsClient, error) {
+func NewWebSocketClient(apiKeyEnv string, privateKeyEnv string) (WsClient, error) {
 	connection, err := openConnection(PublicWSURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to establish websocket connection: %w", err)
 	}
-	kClient, err := newClient()
+	kClient, err := newClient(apiKeyEnv, privateKeyEnv)
 	if err != nil {
 		return nil, fmt.Errorf("failed to establish kraken client: %w", err)
 	}

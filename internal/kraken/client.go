@@ -23,6 +23,7 @@ type Kraken interface {
 	GetAccountBalance() (*map[string]string, error)
 	GetOHCLData(pair string, interval uint16) (*map[string]any, error)
 	AddOrder(pair string, volume string, orderType string) error
+	GetTickerInformation(pair string) (*map[string]TickerInfo, error)
 }
 type kraken struct {
 	apiKey     string
@@ -120,23 +121,17 @@ func request(rp *requestParams) (*http.Response, error) {
 	return http.DefaultClient.Do(req)
 }
 
-func NewClient() (Kraken, error) {
-	kClient, err := newClient()
+func NewClient(apiKeyEnv string, privateKeyEnv string) (Kraken, error) {
+	kClient, err := newClient(apiKeyEnv, privateKeyEnv)
 	if err != nil {
 		return nil, err
 	}
 	return kClient, nil
 }
 
-func newClient() (*kraken, error) {
-	const apiKeyEnvName = "KRAKEN_API_KEY"
-	const privateKeyEnvName = "KRAKEN_PRIVATE_KEY"
-	envMap, err := helpers.LoadEnv([]string{apiKeyEnvName, privateKeyEnvName})
-	if err != nil {
-		return nil, fmt.Errorf("error loading api keys needed for Kraken: %w", err)
-	}
+func newClient(apiKeyEnv string, privateKeyEnv string) (*kraken, error) {
 	return &kraken{
-		apiKey:     (*envMap)[apiKeyEnvName],
-		privateKey: (*envMap)[privateKeyEnvName],
+		apiKey:     apiKeyEnv,
+		privateKey: privateKeyEnv,
 	}, nil
 }
